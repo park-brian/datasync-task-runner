@@ -1,0 +1,3 @@
+Dear Administrator,
+
+The DataSync job transferring files from {source} to {destination} could not be completed due to the following error: 
