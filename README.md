@@ -13,6 +13,12 @@ python3 run-task.py --config-file configure-task.py
 # optional: add daily job to crontab (preferably, use absolute paths)
 0 23 * * * python3 run-task.py --config-file configure-task.py
 
+# optional: run within a container
+docker build -t datasync-task-runner .
+docker run \
+  -v $PWD/configure-task.example.py:/config.py:ro \
+  -v ~/.aws:/root/.aws:ro datasync-task-runner \
+  ./run-task.py -c /config.py
 ```
 
 ### Example Configuration File (`configure-task.py`)
