@@ -9,8 +9,8 @@ from pprint import pformat
 from botocore.exceptions import InvalidConfigError
 from botocore.utils import InvalidArnException
 
+sns = boto3.resource("sns")
 datasync_client = boto3.client("datasync")
-sns = boto3.client("sns")
 
 logging.basicConfig(filename='output.log', encoding='utf-8', level=logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler())
@@ -163,7 +163,7 @@ def main(config_filepath):
 
         # send success notification
         if task_execution_status["Status"] == "SUCCESS":
-            logging.info(f"sending success notification to sns topic (f{sns_topic})")
+            logging.info(f"sending success notification to sns topic ({sns_topic_arn})")
             with open("templates/success.txt") as f:
                 message = f.read().format(
                     count=task_execution_status["FilesTransferred"],
@@ -177,7 +177,7 @@ def main(config_filepath):
 
         # send error notification
         elif task_execution_status["Status"] == "ERROR":
-            logging.info(f"sending failure notification to sns topic (f{sns_topic})")
+            logging.info(f"sending failure notification to sns topic ({sns_topic_arn})")
             with open("templates/failure.txt") as f:
                 message = f.read().format(
                     count=task_execution_status["FilesTransferred"],
