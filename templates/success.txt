@@ -1,3 +1,3 @@
 Dear Administrator,
 
-The DataSync job transferring {count} files from {source} to {destination} completed successfully at {timestamp}.
+The DataSync job transferring {count} files from {source} to {destination} completed successfully at {end_time}.

@@ -143,6 +143,8 @@ def main(config_filepath):
     if sns_topic_arn is not None:
         # initialize sns topic
         sns_topic = sns_client.Topic(sns_topic_arn)
+        start_time = task_execution_status["StartTime"].strftime("%Y-%m-%d %H:%M:%S")
+        end_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
         # send success notification
         if task_execution_status["Status"] == "SUCCESS":
@@ -151,13 +153,11 @@ def main(config_filepath):
                     count=task_execution_status["FilesTransferred"],
                     source=source_arn,
                     destination=destination_arn,
-                    timestamp=task_execution_status["StartTime"],
+                    start_time=start_time,
+                    end_time=end_time,
                 )
 
-                sns_topic.publish(
-                    Subject="DataSync Success",
-                    Message=message,
-                )
+                sns_topic.publish(Subject="DataSync Success", Message=message)
 
         # send error notification
         elif task_execution_status["Status"] == "ERROR":
@@ -166,14 +166,12 @@ def main(config_filepath):
                     count=task_execution_status["FilesTransferred"],
                     source=source_arn,
                     destination=destination_arn,
-                    timestamp=task_execution_status["StartTime"],
+                    start_time=start_time,
+                    end_time=end_time,
                     error=task_execution_status["Result"]["ErrorDetail"],
                 )
 
-                sns_topic.publish(
-                    Subject="DataSync Failure",
-                    Message=message,
-                )
+                sns_topic.publish(Subject="DataSync Failure", Message=message)
 
 
 if __name__ == "__main__":
