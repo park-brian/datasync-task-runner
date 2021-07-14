@@ -65,7 +65,6 @@ def create_location(config: dict):
 
     elif config["type"] == "s3":
         response = datasync_client.create_location_s3(
-            ServerHostname=config["hostname"],
             S3BucketArn=config["arn"],
             S3StorageClass=config.get("storage_class", "STANDARD"),
             S3Config={"BucketAccessRoleArn": config.get("access_role_arn", None)},
