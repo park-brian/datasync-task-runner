@@ -20,10 +20,14 @@ python3 run-task.py --config-file configure-task.py
 ```python
 
 def config():
+    # assuming run-task.py is run once daily, create a task
+    # which syncs a folder created using the YYYY-MM-DD naming convention
     yesterday = date.today() - timedelta(days=1)
     key = yesterday.strftime("%Y-%m-%d")
 
     return {
+        "cloudwatch_log_group_arn": "my-cloudwatch-log-group-arn",
+        "sns_topic_arn": "my-sns-topic-arn",
         "source": {
             "type": "nfs",
             "hostname": "my-nfs-hostname",
