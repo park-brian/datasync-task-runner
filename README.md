@@ -1,5 +1,12 @@
 # datasync-task-runner
 
+### Overview
+This tool serves as a minimal wrapper over the AWS DataSync which supports the following features:
+- Dynamically configurable source/target locations and filters
+- SNS notifications upon success/failure
+- Sensible configuration defaults for DataSync which can be overriden
+
+
 ### Prerequisites
 - DataSync Agent
 - python 3.6+
@@ -42,7 +49,13 @@ def config():
             "subdirectory": f"/source/directory/{key}",
             "agent_arns": [
                 "my-nfs-agent-arn"
-            ]
+            ],
+            "includes": [
+                # see: https://docs.aws.amazon.com/datasync/latest/userguide/API_FilterRule.html
+            ],
+            "excludes": [
+                # see: https://docs.aws.amazon.com/datasync/latest/userguide/API_FilterRule.html
+            ],
         }, 
         "destination": {
             "type": "s3",
