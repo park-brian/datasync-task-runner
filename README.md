@@ -25,6 +25,7 @@ docker run \
 ### Example Configuration File (`configure-task.py`)
 
 ```python
+from datetime import date, timedelta
 
 def config():
     # assuming run-task.py is run once daily, create a task
