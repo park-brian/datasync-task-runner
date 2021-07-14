@@ -16,6 +16,8 @@ pip3 install -r requirements.txt
 python3 run-task.py --config-file configure-task.py
 
 # optional: add daily job to crontab (preferably, use absolute paths)
+# this is only needed if source/destination locations change frequently
+# otherwise, use the 'schedule_expression' option to create a scheduled task
 0 23 * * * python3 run-task.py --config-file configure-task.py
 
 # optional: run within a container

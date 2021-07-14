@@ -113,6 +113,9 @@ def main(config_filepath):
         DestinationLocationArn=destination_arn,
         CloudWatchLogGroupArn=config["cloudwatch_log_group_arn"],
         Excludes=config.get("excludes", []),
+        Schedule={
+            'ScheduleExpression': config.get("schedule_expression")
+        } if config.get("schedule_expression", None) else None
     ).get("TaskArn", None)
 
     # wait until task has been created
