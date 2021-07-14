@@ -74,6 +74,7 @@ def create_location(config: dict):
             S3BucketArn=config["arn"],
             S3StorageClass=config.get("storage_class", "STANDARD"),
             S3Config={"BucketAccessRoleArn": config.get("access_role_arn", None)},
+            Subdirectory=config["subdirectory"],
             Tags=config.get("tags", []),
         )
 
@@ -151,6 +152,11 @@ def main(config_filepath):
             task_execution_status["Status"])
         )
         time.sleep(5)
+
+    # clean up locations
+    logging.info("cleaning up...")
+    datasync_client.delete_location(LocationArn=source_arn)
+    datasync_client.delete_location(LocationArn=destination_arn)
 
     # send sns notification if topic is specified
     sns_topic_arn = config.get("sns_topic_arn", None)
