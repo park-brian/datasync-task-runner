@@ -2,14 +2,18 @@
 
 import importlib.util
 import os.path
+import logging
 import time
 import boto3
+from pprint import pformat
 from botocore.exceptions import InvalidConfigError
 from botocore.utils import InvalidArnException
 
 datasync_client = boto3.client("datasync")
-sns_client = boto3.client("sns")
+sns = boto3.client("sns")
 
+logging.basicConfig(filename='output.log', encoding='utf-8', level=logging.INFO)
+logging.getLogger().addHandler(logging.StreamHandler())
 
 def load_module(module_name, filepath):
     spec = importlib.util.spec_from_file_location(module_name, filepath)
@@ -70,7 +74,6 @@ def create_location(config: dict):
             S3BucketArn=config["arn"],
             S3StorageClass=config.get("storage_class", "STANDARD"),
             S3Config={"BucketAccessRoleArn": config.get("access_role_arn", None)},
-            AgentArns=config.get("agent_arns", []),
             Tags=config.get("tags", []),
         )
 
@@ -96,7 +99,8 @@ def main(config_filepath):
 
     # load configuration
     config = load_module("config", config_filepath).config()
-    print(config)
+    logging.info("loaded configuration")
+    logging.info(pformat(config))
 
     # create resources if needed
     source_arn = config.get("source_arn", create_location(config["source"]))
@@ -112,11 +116,10 @@ def main(config_filepath):
         SourceLocationArn=source_arn,
         DestinationLocationArn=destination_arn,
         CloudWatchLogGroupArn=config["cloudwatch_log_group_arn"],
-        Excludes=config.get("excludes", []),
-        Schedule={
-            'ScheduleExpression': config.get("schedule_expression")
-        } if config.get("schedule_expression", None) else None
+        Excludes=config.get("excludes", [])
     ).get("TaskArn", None)
+    logging.info(f"created task ({task_arn})")
+    logging.info(f"waiting for task to become ready...")
 
     # wait until task has been created
     task_status = {}
@@ -127,6 +130,8 @@ def main(config_filepath):
     if task_status["Status"] == "UNAVAILABLE":
         raise InvalidArnException("The DataSync agent is unable to create the task")
 
+    logging.info(f"starting task ({task_arn})...")
+
     # start/enqueue task
     task_execution_arn = datasync_client.start_task_execution(
         TaskArn=task_arn, Includes=config.get("includes", [])
@@ -135,9 +140,15 @@ def main(config_filepath):
     task_execution_status = {}
 
     # check task status
+    start = time.time()
     while task_execution_status.get("Status", None) not in ["SUCCESS", "ERROR"]:
+        duration = time.time() - start
         task_execution_status = datasync_client.describe_task_execution(
             TaskExecutionArn=task_execution_arn
+        )
+        logging.info("task execution status ({}s): {}".format(
+            round(duration),
+            task_execution_status["Status"])
         )
         time.sleep(5)
 
@@ -146,12 +157,13 @@ def main(config_filepath):
 
     if sns_topic_arn is not None:
         # initialize sns topic
-        sns_topic = sns_client.Topic(sns_topic_arn)
+        sns_topic = sns.Topic(sns_topic_arn)
         start_time = task_execution_status["StartTime"].strftime("%Y-%m-%d %H:%M:%S")
         end_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
         # send success notification
         if task_execution_status["Status"] == "SUCCESS":
+            logging.info(f"sending success notification to sns topic (f{sns_topic})")
             with open("templates/success.txt") as f:
                 message = f.read().format(
                     count=task_execution_status["FilesTransferred"],
@@ -165,6 +177,7 @@ def main(config_filepath):
 
         # send error notification
         elif task_execution_status["Status"] == "ERROR":
+            logging.info(f"sending failure notification to sns topic (f{sns_topic})")
             with open("templates/failure.txt") as f:
                 message = f.read().format(
                     count=task_execution_status["FilesTransferred"],
