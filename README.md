@@ -1,11 +1,9 @@
 # datasync-task-runner
 
 ### Overview
-This tool serves as a minimal wrapper over the AWS DataSync which supports the following features:
-- Dynamically configurable source/target locations and filters
+This tool is a minimal wrapper over AWS DataSync which implements:
+- Dynamic configuration at runtime via python modules
 - SNS notifications upon success/failure
-- Sensible configuration defaults for DataSync which can be overriden
-
 
 ### Prerequisites
 - DataSync Agent
@@ -23,13 +21,13 @@ python3 run-task.py --config-file configure-task.py
 # optional: run within a container
 docker build -t datasync-task-runner .
 docker run \
-  -v $PWD/configure-task.example.py:/config.py:ro \
-  -v ~/.aws:/root/.aws:ro \
+  -v $PWD/configure-task.example.py:/config.py:ro \ # mount configuration file at /config.py
+  -v ~/.aws:/root/.aws:ro \ # mount .aws directory if needed
   datasync-task-runner \
-  ./run-task.py -c /config.py
+  ./run-task.py -c /config.py # execute run-task with the provided configuration
 ```
 
-### Example Configuration File (`configure-task.py`)
+### Example Configuration File (`config.py`)
 
 ```python
 from datetime import date, timedelta
