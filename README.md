@@ -17,7 +17,8 @@ python3 run-task.py --config-file configure-task.py
 docker build -t datasync-task-runner .
 docker run \
   -v $PWD/configure-task.example.py:/config.py:ro \
-  -v ~/.aws:/root/.aws:ro datasync-task-runner \
+  -v ~/.aws:/root/.aws:ro \
+  datasync-task-runner \
   ./run-task.py -c /config.py
 ```
 
