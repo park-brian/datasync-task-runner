@@ -12,8 +12,9 @@ from botocore.utils import InvalidArnException
 sns = boto3.resource("sns")
 datasync_client = boto3.client("datasync")
 
-logging.basicConfig(filename='output.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(filename="output.log", encoding="utf-8", level=logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler())
+
 
 def load_module(module_name, filepath):
     spec = importlib.util.spec_from_file_location(module_name, filepath)
@@ -22,120 +23,155 @@ def load_module(module_name, filepath):
     return module
 
 
-def create_location(config: dict):
-    response = {}
+def update_location(options: dict):
+    location_arn = options.get("LocationArn")
 
-    if config["type"] == "efs":
-        response = datasync_client.create_location_efs(
-            Subdirectory=config["subdirectory"],
-            EfsFilesystemArn=config["arn"],
-            Ec2Config={
-                "SubnetArn": config["ec2_subnet_arn"],
-                "SecurityGroupArns": config["ec2_security_group_arns"],
-            },
-            Tags=config.get("tags", []),
-        )
+    if location_arn is None:
+        raise InvalidConfigError("Please specify a location ARN")
 
-    elif config["type"] == "fsx_windows":
-        response = datasync_client.create_location_fsx_windows(
-            Subdirectory=config["subdirectory"],
-            FsxFilesystemArn=config["arn"],
-            SecurityGroupArns=config["security_group_arns"],
-            Domain=config.get("domain", None),
-            User=config["user"],
-            Password=config["password"],
-            Tags=config.get("tags", []),
-        )
+    type = options["Type"]
+    config = options["Config"]
+    config.update(LocationArn=location_arn)
 
-    elif config["type"] == "nfs":
-        response = datasync_client.create_location_nfs(
-            Subdirectory=config["subdirectory"],
-            ServerHostname=config["hostname"],
-            OnPremConfig={"AgentArns": config.get("agent_arns", [])},
-            MountOptions={"Version": config.get("nfs_version", "AUTOMATIC")},
-            Tags=config.get("tags", []),
-        )
+    if type == "nfs":
+        datasync_client.update_location_nfs(**config)
 
-    elif config["type"] == "object_storage":
-        response = datasync_client.create_location_object_storage(
-            ServerHostname=config["hostname"],
-            ServerPort=config.get("port", 443),
-            ServerProtocol=config.get("protocol", "HTTPS"),
-            Subdirectory=config["subdirectory"],
-            BucketName=config["bucket"],
-            AccessKey=config.get("access_key", None),
-            SecretKey=config.get("secret_key", None),
-            AgentArns=config.get("agent_arns", []),
-            Tags=config.get("tags", []),
-        )
-
-    elif config["type"] == "s3":
-        response = datasync_client.create_location_s3(
-            S3BucketArn=config["arn"],
-            S3StorageClass=config.get("storage_class", "STANDARD"),
-            S3Config={"BucketAccessRoleArn": config.get("access_role_arn", None)},
-            Subdirectory=config["subdirectory"],
-            Tags=config.get("tags", []),
-        )
+    elif type == "object_storage":
+        datasync_client.update_location_object_storage(**config)
 
     elif config["type"] == "smb":
-        response = datasync_client.create_location_smb(
-            ServerHostname=config["hostname"],
-            Subdirectory=config["subdirectory"],
-            Domain=config.get("domain", None),
-            User=config["user"],
-            Password=config["password"],
-            AgentArns=config.get("agent_arns", []),
-            MountOptions=config.get("smb_version", "AUTOMATIC"),
-            Tags=config.get("tags", []),
-        )
+        datasync_client.update_location_smb(**config)
 
-    return response.get("LocationArn", None)
+    else:
+        raise InvalidConfigError("Please specify a valid location type")
+
+    return location_arn
 
 
-def main(config_filepath):
+def create_location(options):
+    type = options["Type"]
+    config = options["Config"]
+
+    if type == "efs":
+        return datasync_client.create_location_efs(**config)["LocationArn"]
+
+    elif type == "fsx_windows":
+        return datasync_client.create_location_fsx_windows(**config)["LocationArn"]
+
+    elif type == "nfs":
+        return datasync_client.create_location_nfs(**config)["LocationArn"]
+
+    elif type == "object_storage":
+        return datasync_client.create_location_object_storage(**config)["LocationArn"]
+
+    elif type == "s3":
+        return datasync_client.create_location_s3(**config)["LocationArn"]
+
+    elif config["type"] == "smb":
+        return datasync_client.create_location_smb(**config)["LocationArn"]
+
+    else:
+        raise InvalidConfigError("Please specify a valid location type")
+
+
+def get_location(options):
+    if options["LocationArn"]:
+        return update_location(options)
+    else:
+        return create_location(options)
+
+
+def create_task(config: dict):
+    task_config = {
+        key: config[key]
+        for key in config.keys()
+        & {
+            "CloudWatchLogGroupArn",
+            "Name",
+            "Options",
+            "Excludes",
+            "Schedule",
+            "Tags",
+        }
+    }
+
+    task_config.update(
+        SourceLocationArn=get_location(config["SourceLocation"]),
+        DestinationLocationArn=get_location(config["DestinationLocation"]),
+    )
+
+    return datasync_client.create_task(**task_config).get("TaskArn")
+
+
+def update_task(config: dict):
+    task_config = {
+        key: config[key]
+        for key in config.keys()
+        & {
+            "TaskArn",
+            "CloudWatchLogGroupArn",
+            "Name",
+            "Options",
+            "Excludes",
+            "Schedule",
+        }
+    }
+
+    for location in [config.get("SourceLocation"), config.get("DestinationLocation")]:
+        if location is not None:
+            update_location(location)
+
+    datasync_client.update_task(**task_config)
+    return task_config.get("TaskArn")
+
+
+def main(config_filepath, task_check_interval=5):
     # check if file exists
     if not os.path.isfile(config_filepath):
         raise FileNotFoundError(config_filepath)
 
     # load configuration
-    config = load_module("config", config_filepath).config()
+    config = load_module("config", config_filepath)
+    task_config = config.configure_task()
     logging.info("loaded configuration")
-    logging.info(pformat(config))
+    logging.info(pformat(task_config))
 
-    # create resources if needed
-    source_arn = config.get("source_arn", create_location(config["source"]))
-    destination_arn = config.get(
-        "destination_arn", create_location(config["destination"])
-    )
+    # invoke before_task_configuration
+    if not config.before_task_configuration():
+        return False
 
-    if source_arn is None or destination_arn is None:
-        raise InvalidConfigError()
+    if config["TaskArn"]:
+        task_arn = update_task(task_config)
+        logging.info(f"updated task ({task_arn})")
+    else:
+        task_arn = create_task(task_config)
+        logging.info(f"created task ({task_arn})")
 
-    # create task
-    task_arn = datasync_client.create_task(
-        SourceLocationArn=source_arn,
-        DestinationLocationArn=destination_arn,
-        CloudWatchLogGroupArn=config["cloudwatch_log_group_arn"],
-        Excludes=config.get("excludes", [])
-    ).get("TaskArn", None)
-    logging.info(f"created task ({task_arn})")
     logging.info(f"waiting for task to become ready...")
 
     # wait until task has been created
     task_status = {}
-    while task_status.get("Status", None) not in ["AVAILABLE", "UNAVAILABLE", "QUEUED"]:
+    while task_status.get("Status") not in ["AVAILABLE", "UNAVAILABLE", "QUEUED"]:
         task_status = datasync_client.describe_task(TaskArn=task_arn)
-        time.sleep(5)
+        time.sleep(task_check_interval)
 
     if task_status["Status"] == "UNAVAILABLE":
         raise InvalidArnException("The DataSync agent is unable to create the task")
 
+    # invoke before_task_execution
+    if not config.before_task_execution(task_status):
+        return False
+
     logging.info(f"starting task ({task_arn})...")
 
     # start/enqueue task
+    task_execution_config = {"TaskArn": task_arn}
+
+    if config.get("Includes"):
+        task_execution_config["Includes"] = config["Includes"]
+
     task_execution_arn = datasync_client.start_task_execution(
-        TaskArn=task_arn, Includes=config.get("includes", [])
+        **task_execution_config
     ).get("TaskExecutionArn", None)
 
     task_execution_status = {}
@@ -147,54 +183,21 @@ def main(config_filepath):
         task_execution_status = datasync_client.describe_task_execution(
             TaskExecutionArn=task_execution_arn
         )
-        logging.info("task execution status ({}s): {}".format(
-            round(duration),
-            task_execution_status["Status"])
+
+        logging.info(
+            "task execution status ({}s): {}".format(
+                round(duration), task_execution_status["Status"]
+            )
         )
-        time.sleep(5)
 
-    # clean up locations
-    logging.info("cleaning up...")
-    datasync_client.delete_location(LocationArn=source_arn)
-    datasync_client.delete_location(LocationArn=destination_arn)
+        # invoke before_task_execution
+        if not config.during_task_execution(task_status, task_execution_status):
+            return False
 
-    # send sns notification if topic is specified
-    sns_topic_arn = config.get("sns_topic_arn", None)
+        time.sleep(task_check_interval)
 
-    if sns_topic_arn is not None:
-        # initialize sns topic
-        sns_topic = sns.Topic(sns_topic_arn)
-        start_time = task_execution_status["StartTime"].strftime("%Y-%m-%d %H:%M:%S")
-        end_time = time.strftime("%Y-%m-%d %H:%M:%S")
-
-        # send success notification
-        if task_execution_status["Status"] == "SUCCESS":
-            logging.info(f"sending success notification to sns topic ({sns_topic_arn})")
-            with open("templates/success.txt") as f:
-                message = f.read().format(
-                    count=task_execution_status["FilesTransferred"],
-                    source=source_arn,
-                    destination=destination_arn,
-                    start_time=start_time,
-                    end_time=end_time,
-                )
-
-                sns_topic.publish(Subject="DataSync Success", Message=message)
-
-        # send error notification
-        elif task_execution_status["Status"] == "ERROR":
-            logging.info(f"sending failure notification to sns topic ({sns_topic_arn})")
-            with open("templates/failure.txt") as f:
-                message = f.read().format(
-                    count=task_execution_status["FilesTransferred"],
-                    source=source_arn,
-                    destination=destination_arn,
-                    start_time=start_time,
-                    end_time=end_time,
-                    error=task_execution_status["Result"]["ErrorDetail"],
-                )
-
-                sns_topic.publish(Subject="DataSync Failure", Message=message)
+    # invoke after_task_execution
+    config.after_task_execution(task_status, task_execution_status)
 
 
 if __name__ == "__main__":
