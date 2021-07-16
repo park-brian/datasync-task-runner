@@ -96,9 +96,9 @@ def configure_task():
         "TaskArn": "arn:aws:datasync:<region>:<account>:task/<task-id>"
     }
 
-def before_task_creation():
+def before_task_configuration():
     """
-    An optional callback invoked before task creation - used for 
+    An optional callback invoked before task configuration - used for 
     preprocessing files or verifying locations, for example. 
     If False is returned, the task is not created.
 
