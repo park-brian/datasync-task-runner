@@ -12,25 +12,62 @@ from botocore.utils import InvalidArnException
 sns = boto3.resource("sns")
 datasync_client = boto3.client("datasync")
 
-logging.basicConfig(filename="output.log", encoding="utf-8", level=logging.INFO)
+logging.basicConfig(filename="run-task.log", encoding="utf-8", level=logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler())
 
 
 def load_module(module_name, filepath):
+    """
+    Loads a python module from a given filepath
+
+    Args:
+        module_name (string): The name of the module
+        filepath (string): The path to the file containing the module
+
+    Returns:
+        [ModuleType]: The loaded module
+    """
     spec = importlib.util.spec_from_file_location(module_name, filepath)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+def remove_none(dictionary):
+    return {k: v for k, v in dictionary.items() if v is not None}
+
+
 def update_location(options: dict):
+    """
+    Updates a DataSync location's metadata
+
+    Args:
+        options (dict): A dictionary containing LocationArn, Type, and Config properties
+        - LocationArn [string]
+        - Type [string]
+            - nfs
+            - object_storage
+            - smb
+        - Config [dict]
+            - Conforms to the request syntax for the UpdateLocation APIs
+            - nfs: https://docs.aws.amazon.com/datasync/latest/userguide/API_UpdateLocationNfs.html
+            - object_storage: https://docs.aws.amazon.com/datasync/latest/userguide/API_UpdateLocationObjectStorage.html
+            - smb: https://docs.aws.amazon.com/datasync/latest/userguide/API_UpdateLocationSmb.html
+
+    Raises:
+        InvalidConfigError: If LocationArn is not specified, or an invalid Type is specified
+
+    Returns:
+        [string]: The updated location's ARN
+    """
+
     location_arn = options.get("LocationArn")
+    type = options.get("Type")
+    config = options.get("Config", {})
 
     if location_arn is None:
         raise InvalidConfigError("Please specify a location ARN")
 
-    type = options["Type"]
-    config = options["Config"]
     config.update(LocationArn=location_arn)
 
     if type == "nfs":
@@ -49,8 +86,36 @@ def update_location(options: dict):
 
 
 def create_location(options):
-    type = options["Type"]
-    config = options["Config"]
+    """
+    Creates a DataSync location
+
+    Args:
+        options (dict): [description]
+        - Type [string]
+            - efs
+            - fsx_windows
+            - nfs
+            - object_storage
+            - s3
+            - smb
+        - Config [dict]
+            - Conforms to the request syntax for the CreateLocation APIs
+            - efs: https://docs.aws.amazon.com/datasync/latest/userguide/API_CreateLocationEfs.html
+            - fsx_windows: https://docs.aws.amazon.com/datasync/latest/userguide/API_CreateLocationFsxWindows.html
+            - nfs: https://docs.aws.amazon.com/datasync/latest/userguide/API_CreateLocationNfs.html
+            - object_storage: https://docs.aws.amazon.com/datasync/latest/userguide/API_CreateLocationObjectStorage.html
+            - s3: https://docs.aws.amazon.com/datasync/latest/userguide/API_CreateLocationS3.html
+            - smb: https://docs.aws.amazon.com/datasync/latest/userguide/API_CreateLocationSmb.html
+
+    Raises:
+        InvalidConfigError: If an invalid Type or Config is specified
+
+    Returns:
+        [string]: The new location's ARN
+    """
+
+    type = options.get("Type")
+    config = options.get("Config", {})
 
     if type == "efs":
         return datasync_client.create_location_efs(**config)["LocationArn"]
@@ -74,13 +139,6 @@ def create_location(options):
         raise InvalidConfigError("Please specify a valid location type")
 
 
-def get_location(options):
-    if options["LocationArn"]:
-        return update_location(options)
-    else:
-        return create_location(options)
-
-
 def create_task(config: dict):
     task_config = {
         key: config[key]
@@ -94,6 +152,12 @@ def create_task(config: dict):
             "Tags",
         }
     }
+
+    get_location = (
+        lambda config: update_location(config)
+        if config.get("LocationArn")
+        else create_location(config)
+    )
 
     task_config.update(
         SourceLocationArn=get_location(config["SourceLocation"]),
@@ -125,29 +189,29 @@ def update_task(config: dict):
     return task_config.get("TaskArn")
 
 
-def main(config_filepath, task_check_interval=5):
-    # check if file exists
+def run_task(config_filepath, task_check_interval=5):
+    # check if config file exists
     if not os.path.isfile(config_filepath):
         raise FileNotFoundError(config_filepath)
 
     # load configuration
-    config = load_module("config", config_filepath)
-    task_config = config.configure_task()
+    config_module = load_module("config", config_filepath)
+    task_config = config_module.configure_task()
     logging.info("loaded configuration")
-    logging.info(pformat(task_config))
 
     # invoke before_task_configuration
-    if not config.before_task_configuration():
-        return False
+    if hasattr(config_module, "before_task_configuration"):
+        logging.info(f"invoke before_task_configuration")
+        if not config_module.before_task_configuration():
+            logging.info(f"cancelled task configuration, aborting job")
+            return False
 
-    if config["TaskArn"]:
+    if task_config.get("TaskArn"):
         task_arn = update_task(task_config)
-        logging.info(f"updated task ({task_arn})")
     else:
         task_arn = create_task(task_config)
-        logging.info(f"created task ({task_arn})")
 
-    logging.info(f"waiting for task to become ready...")
+    logging.info(f"[{task_arn}] waiting for task to become ready")
 
     # wait until task has been created
     task_status = {}
@@ -155,20 +219,20 @@ def main(config_filepath, task_check_interval=5):
         task_status = datasync_client.describe_task(TaskArn=task_arn)
         time.sleep(task_check_interval)
 
-    if task_status["Status"] == "UNAVAILABLE":
-        raise InvalidArnException("The DataSync agent is unable to create the task")
+    if task_status.get("Status") == "UNAVAILABLE":
+        raise InvalidArnException(f"[{task_arn}] task is unavailable ")
 
     # invoke before_task_execution
-    if not config.before_task_execution(task_status):
-        return False
+    if hasattr(config_module, "before_task_execution"):
+        logging.info(f"[{task_arn}] invoke before_task_execution")
+        if not config_module.before_task_execution():
+            logging.info(f"[{task_arn}] cancelled task execution, aborting job")
+            return False
 
-    logging.info(f"starting task ({task_arn})...")
+    logging.info(f"[{task_arn}] starting task")
 
     # start/enqueue task
-    task_execution_config = {"TaskArn": task_arn}
-
-    if config.get("Includes"):
-        task_execution_config["Includes"] = config["Includes"]
+    task_execution_config = remove_none({"TaskArn": task_arn, "Includes": task_config.get("Includes")})
 
     task_execution_arn = datasync_client.start_task_execution(
         **task_execution_config
@@ -178,26 +242,33 @@ def main(config_filepath, task_check_interval=5):
 
     # check task status
     start = time.time()
-    while task_execution_status.get("Status", None) not in ["SUCCESS", "ERROR"]:
+    while task_execution_status.get("Status") not in ["SUCCESS", "ERROR"]:
         duration = time.time() - start
         task_execution_status = datasync_client.describe_task_execution(
             TaskExecutionArn=task_execution_arn
         )
 
         logging.info(
-            "task execution status ({}s): {}".format(
-                round(duration), task_execution_status["Status"]
+            "[{}] [{}s]: {}".format(
+                task_execution_arn,
+                round(duration), 
+                task_execution_status["Status"]
             )
         )
 
-        # invoke before_task_execution
-        if not config.during_task_execution(task_status, task_execution_status):
-            return False
+        # invoke during_task_execution
+        if hasattr(config_module, "during_task_execution"):
+            logging.info(f"[{task_execution_arn}] invoke during_task_execution")
+            if not config_module.during_task_execution(task_status, task_execution_status):
+                logging.info(f"[{task_execution_arn}] cancelled task execution, aborting job")
+                return False
 
         time.sleep(task_check_interval)
 
     # invoke after_task_execution
-    config.after_task_execution(task_status, task_execution_status)
+    if hasattr(config_module, "after_task_execution"):
+        logging.info(f"[{task_execution_arn}] invoke after_task_execution")
+        config_module.after_task_execution(task_status, task_execution_status)
 
 
 if __name__ == "__main__":
@@ -214,4 +285,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    main(args.config_file)
+    run_task(args.config_file)
