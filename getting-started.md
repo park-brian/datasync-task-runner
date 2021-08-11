@@ -16,26 +16,31 @@
 1. Create a CloudWatch log group.
 2. Create source/destination locations.
 3. Create the task using the source/destination locations. Ensure the task is configured to log all transferred objects and files to the log group created in step 1. 
-4. To validate execution of this task, select the created task and **start with overriding options**. Ensure data is verified at the location and the transfer configuration specifies patterns for specific files/folders to transfer (if needed). Then, start the task.
-5. Monitor the task until execution is complete.
+4. To validate execution of this task, select the created task and **start with overriding options**. Ensure that data is verified at the destination location, and that the transfer configuration specifies patterns for specific files/folders to include (if needed). Then, start the task and monitor until completion.
 
 If execution completed successfully, we may now proceed with configuring the DataSync task runner to execute this task on a regular basis with dynamic filters. 
 
-1. Download the DataSync task runner. Eg: wget https://raw.githubusercontent.com/park-brian/datasync-task-runner/main/run-task.py
+1. Download the DataSync task runner. 
+```sh
+wget https://raw.githubusercontent.com/park-brian/datasync-task-runner/main/run-task.py
+
+chmod +x run-task.py
+```
 2. Create a config.py file with the following contents:
 
 ```python
 def configure_task():
-	return {
+    return {
         "TaskArn": "arn:aws:datasync:<region>:<account>:task/<task-id>"
     }
 ```
 
-For user-specific requirements, we can create a configuration with the following:
+As an example, we can create the following configuration which has custom requirements:
 
 ```python
 from datetime import date, timedelta
 
+# Sync a subfolder with the YYYY-MM-DD naming convention
 yesterday = date.today() - timedelta(days=1)
 folder = yesterday.strftime("%Y-%m-%d")
 
